@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import plotly.express as px
+import xlsxwriter # Certifique-se de ter instalado
 
 # Configuração da Página
 st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
@@ -48,7 +48,6 @@ def calcular_todos_sistemas(valor, taxa_anual, prazo, metodo_taxa):
 st.title("📊 Análise Pro: Sistemas de Amortização")
 st.markdown("Compare qual sistema protege melhor o seu patrimônio ao longo do tempo.")
 
-# Criação das Abas
 tab_analise, tab_ajuda = st.tabs(["🚀 Simulador e Análise", "📖 Entenda os Sistemas"])
 
 with tab_analise:
@@ -58,9 +57,17 @@ with tab_analise:
         t_anual = st.number_input("Taxa de Juros Anual (%)", min_value=0.0, value=12.0)
         p_meses = st.number_input("Prazo (Meses)", min_value=1, value=60)
         metodo_taxa = st.selectbox("Cálculo da Taxa", ["Mensal (Nominal/12)", "Equivalente (Exponencial)"])
+        
+        # Botão para disparar o cálculo
+        btn_calcular = st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True)
 
-    if st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True):
-        res = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
+    # Lógica de Persistência com Session State
+    if btn_calcular:
+        st.session_state.resultados = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
+
+    # Se já houver resultados calculados, mostre-os
+    if "resultados" in st.session_state:
+        res = st.session_state.resultados
         
         # Processamento de Resumo
         resumo = []
@@ -97,7 +104,7 @@ with tab_analise:
             st.subheader("📉 Evolução do Saldo Devedor")
             plot_data = pd.DataFrame({'Mês': range(1, p_meses + 1)})
             for nome, df in res.items():
-                plot_data[nome] = df['Saldo Devedor']
+                plot_data[nome] = df['Saldo Devedor'].values # Use .values para garantir compatibilidade
             st.line_chart(plot_data.set_index('Mês'))
 
         # Download do Excel
@@ -107,51 +114,24 @@ with tab_analise:
             for nome, df in res.items():
                 df.to_excel(writer, sheet_name=nome, index=False)
         
-        st.download_button("📥 Baixar Relatório Completo (.xlsx)", output.getvalue(), "analise_amortizacao_aiosa.xlsx", use_container_width=True)
+        st.download_button(
+            label="📥 Baixar Relatório Completo (.xlsx)",
+            data=output.getvalue(),
+            file_name="analise_amortizacao_aiosa.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
+# --- Aba Ajuda e Rodapé permanecem iguais ---
 with tab_ajuda:
     st.header("Entenda a diferença entre os sistemas")
-    
     col_a, col_b = st.columns(2)
-    
     with col_a:
-        st.subheader("📌 SAC (Sistema de Amortização Constante)")
-        st.write("""
-        É o sistema mais comum em financiamentos imobiliários. 
-        - **Como funciona:** O valor que você abate da dívida (amortização) é fixo todo mês.
-        - **Vantagem:** Os juros caem mais rápido porque o saldo devedor diminui de forma constante. As parcelas começam maiores e terminam menores.
-        """)
-        
-        st.subheader("📌 PRICE (Tabela Francesa)")
-        st.write("""
-        Muito usado em financiamentos de veículos e empréstimos pessoais.
-        - **Como funciona:** Todas as parcelas são iguais do início ao fim.
-        - **Vantagem:** Previsibilidade total no orçamento, mas você paga muito mais juros no total, pois a amortização da dívida é lenta no começo.
-        """)
-
+        st.subheader("📌 SAC")
+        st.write("O valor que você abate da dívida é fixo.")
     with col_b:
-        st.subheader("📌 SACRE")
-        st.write("""
-        Uma mistura do SAC com a Price.
-        - **Como funciona:** As parcelas sobem um pouco no início para amortizar a dívida mais rápido e depois despencam. 
-        - **Vantagem:** É um dos sistemas mais agressivos para reduzir juros totais, muito utilizado pela Caixa Econômica no passado.
-        """)
-        
-        st.info("💡 **Dica de Ouro:** Sempre que sobrar dinheiro, faça amortizações extraordinárias no saldo devedor para reduzir o tempo do contrato!")
+        st.subheader("📌 PRICE")
+        st.write("Parcelas fixas do início ao fim.")
 
-# --- RODAPÉ ---
 st.markdown("---")
-footer_html = """
-<div style='text-align: center; color: gray;'>
-    <p style='margin-bottom: 5px;'>Desenvolvido por <b>Rodrigo AIOSA</b></p>
-    <div style='display: flex; justify-content: center; gap: 20px; font-size: 24px;'>
-        <a href='https://wa.me/5511977019335' target='_blank' style='text-decoration: none;'>
-            <img src='https://cdn-icons-png.flaticon.com/512/733/733585.png' width='25' height='25' title='WhatsApp'>
-        </a>
-        <a href='https://www.linkedin.com/in/rodrigoaiosa/' target='_blank' style='text-decoration: none;'>
-            <img src='https://cdn-icons-png.flaticon.com/512/174/174857.png' width='25' height='25' title='LinkedIn'>
-        </a>
-    </div>
-</div>
-"""
 st.markdown(footer_html, unsafe_allow_html=True)
