@@ -1,7 +1,21 @@
 import streamlit as st
 import pandas as pd
 import io
-import xlsxwriter # Certifique-se de ter instalado
+
+# 1. Definição do HTML do Rodapé (Definido no início para evitar NameError)
+footer_html = """
+<div style='text-align: center; color: gray;'>
+    <p style='margin-bottom: 5px;'>Desenvolvido por <b>Rodrigo AIOSA</b></p>
+    <div style='display: flex; justify-content: center; gap: 20px; font-size: 24px;'>
+        <a href='https://wa.me/5511977019335' target='_blank' style='text-decoration: none;'>
+            <img src='https://cdn-icons-png.flaticon.com/512/733/733585.png' width='25' height='25' title='WhatsApp'>
+        </a>
+        <a href='https://www.linkedin.com/in/rodrigoaiosa/' target='_blank' style='text-decoration: none;'>
+            <img src='https://cdn-icons-png.flaticon.com/512/174/174857.png' width='25' height='25' title='LinkedIn'>
+        </a>
+    </div>
+</div>
+"""
 
 # Configuração da Página
 st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
@@ -58,18 +72,16 @@ with tab_analise:
         p_meses = st.number_input("Prazo (Meses)", min_value=1, value=60)
         metodo_taxa = st.selectbox("Cálculo da Taxa", ["Mensal (Nominal/12)", "Equivalente (Exponencial)"])
         
-        # Botão para disparar o cálculo
-        btn_calcular = st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True)
+        # O clique no botão salva os dados no estado da sessão
+        if st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True):
+            st.session_state['resultados'] = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
+            st.session_state['prazo'] = p_meses
 
-    # Lógica de Persistência com Session State
-    if btn_calcular:
-        st.session_state.resultados = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
-
-    # Se já houver resultados calculados, mostre-os
-    if "resultados" in st.session_state:
-        res = st.session_state.resultados
+    # Exibe os resultados se eles existirem no estado da sessão
+    if 'resultados' in st.session_state:
+        res = st.session_state['resultados']
+        p_meses = st.session_state['prazo']
         
-        # Processamento de Resumo
         resumo = []
         for nome, df in res.items():
             resumo.append({
@@ -84,7 +96,6 @@ with tab_analise:
         maior_juros = df_res['Total Juros'].max()
         df_res['Economia'] = maior_juros - df_res['Total Juros']
 
-        # --- DASHBOARD ---
         col1, col2 = st.columns([1, 2])
         
         with col1:
@@ -98,16 +109,16 @@ with tab_analise:
             }))
             
             melhor = df_res.iloc[0]
-            st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso, economizando **R$ {melhor['Economia']:.2f}** em juros!")
+            st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso!")
 
         with col2:
             st.subheader("📉 Evolução do Saldo Devedor")
             plot_data = pd.DataFrame({'Mês': range(1, p_meses + 1)})
             for nome, df in res.items():
-                plot_data[nome] = df['Saldo Devedor'].values # Use .values para garantir compatibilidade
+                plot_data[nome] = df['Saldo Devedor'].values
             st.line_chart(plot_data.set_index('Mês'))
 
-        # Download do Excel
+        # Preparação do arquivo Excel para download
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_res.to_excel(writer, sheet_name='Resumo', index=False)
@@ -122,16 +133,16 @@ with tab_analise:
             use_container_width=True
         )
 
-# --- Aba Ajuda e Rodapé permanecem iguais ---
 with tab_ajuda:
     st.header("Entenda a diferença entre os sistemas")
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("📌 SAC")
-        st.write("O valor que você abate da dívida é fixo.")
+        st.write("Amortização constante, parcelas decrescentes.")
     with col_b:
         st.subheader("📌 PRICE")
-        st.write("Parcelas fixas do início ao fim.")
+        st.write("Parcelas fixas, juros maiores no início.")
 
+# --- RODAPÉ ---
 st.markdown("---")
 st.markdown(footer_html, unsafe_allow_html=True)
