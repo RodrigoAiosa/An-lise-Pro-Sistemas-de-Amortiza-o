@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 
-# 1. Definição do HTML do Rodapé (Definido no início para evitar NameError)
+# --- 1. CONFIGURAÇÃO E ESTILOS ---
+st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
+
+# Definição do Rodapé (Definido no topo para evitar NameError)
 footer_html = """
 <div style='text-align: center; color: gray;'>
     <p style='margin-bottom: 5px;'>Desenvolvido por <b>Rodrigo AIOSA</b></p>
@@ -17,9 +20,7 @@ footer_html = """
 </div>
 """
 
-# Configuração da Página
-st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
-
+# --- 2. FUNÇÕES DE CÁLCULO ---
 def calcular_todos_sistemas(valor, taxa_anual, prazo, metodo_taxa):
     if metodo_taxa == "Mensal (Nominal/12)":
         taxa_mensal = (taxa_anual / 100) / 12
@@ -58,7 +59,7 @@ def calcular_todos_sistemas(valor, taxa_anual, prazo, metodo_taxa):
 
     return sistemas
 
-# --- Interface Principal ---
+# --- 3. INTERFACE PRINCIPAL ---
 st.title("📊 Análise Pro: Sistemas de Amortização")
 st.markdown("Compare qual sistema protege melhor o seu patrimônio ao longo do tempo.")
 
@@ -72,15 +73,16 @@ with tab_analise:
         p_meses = st.number_input("Prazo (Meses)", min_value=1, value=60)
         metodo_taxa = st.selectbox("Cálculo da Taxa", ["Mensal (Nominal/12)", "Equivalente (Exponencial)"])
         
-        # O clique no botão salva os dados no estado da sessão
-        if st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True):
-            st.session_state['resultados'] = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
-            st.session_state['prazo'] = p_meses
+        btn_calcular = st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True)
 
-    # Exibe os resultados se eles existirem no estado da sessão
+    # Lógica de persistência para evitar que os dados sumam ao clicar em baixar
+    if btn_calcular:
+        st.session_state['resultados'] = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
+        st.session_state['prazo_simulado'] = p_meses
+
     if 'resultados' in st.session_state:
         res = st.session_state['resultados']
-        p_meses = st.session_state['prazo']
+        prazo = st.session_state['prazo_simulado']
         
         resumo = []
         for nome, df in res.items():
@@ -109,16 +111,16 @@ with tab_analise:
             }))
             
             melhor = df_res.iloc[0]
-            st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso!")
+            st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso, economizando **R$ {melhor['Economia']:.2f}** em juros!")
 
         with col2:
             st.subheader("📉 Evolução do Saldo Devedor")
-            plot_data = pd.DataFrame({'Mês': range(1, p_meses + 1)})
+            plot_data = pd.DataFrame({'Mês': range(1, prazo + 1)})
             for nome, df in res.items():
                 plot_data[nome] = df['Saldo Devedor'].values
             st.line_chart(plot_data.set_index('Mês'))
 
-        # Preparação do arquivo Excel para download
+        # Download do Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_res.to_excel(writer, sheet_name='Resumo', index=False)
@@ -135,14 +137,38 @@ with tab_analise:
 
 with tab_ajuda:
     st.header("Entenda a diferença entre os sistemas")
-    col_a, col_b = st.columns(2)
+    
+    col_a, col_b, col_c = st.columns(3)
+    
     with col_a:
         st.subheader("📌 SAC")
-        st.write("Amortização constante, parcelas decrescentes.")
+        st.write("""
+        **Amortização Constante**
+        - **Parcelas:** Decrescentes (começam altas e diminuem).
+        - **Dívida:** O valor principal é reduzido de forma igual todo mês.
+        - **Custo:** Geralmente mais barato que a Price em juros totais.
+        """)
+        
     with col_b:
         st.subheader("📌 PRICE")
-        st.write("Parcelas fixas, juros maiores no início.")
+        st.write("""
+        **Sistema Francês**
+        - **Parcelas:** Fixas do início ao fim do contrato.
+        - **Dívida:** Amortização lenta no início, rápida no final.
+        - **Custo:** Ideal para previsibilidade, mas paga-se mais juros no total.
+        """)
 
-# --- RODAPÉ ---
+    with col_c:
+        st.subheader("📌 SACRE")
+        st.write("""
+        **Mix de SAC e Price**
+        - **Parcelas:** Podem oscilar no início, mas caem rápido depois.
+        - **Dívida:** Foco em amortizar o saldo devedor agressivamente.
+        - **Custo:** Um dos sistemas mais eficientes para reduzir juros totais.
+        """)
+    
+    st.info("💡 **Dica do Especialista:** Amortizar o saldo devedor diretamente reduz o tempo de contrato e economiza juros significativamente.")
+
+# --- 4. RODAPÉ ---
 st.markdown("---")
 st.markdown(footer_html, unsafe_allow_html=True)
