@@ -5,7 +5,7 @@ import io
 # --- 1. CONFIGURAÇÃO E ESTILOS ---
 st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
 
-# Definição do Rodapé (Definido no topo para evitar NameError)
+# Definição do Rodapé (Posicionado no topo para evitar NameError)
 footer_html = """
 <div style='text-align: center; color: gray;'>
     <p style='margin-bottom: 5px;'>Desenvolvido por <b>Rodrigo AIOSA</b></p>
@@ -75,7 +75,7 @@ with tab_analise:
         
         btn_calcular = st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True)
 
-    # Lógica de persistência para evitar que os dados sumam ao clicar em baixar
+    # Persistência de dados
     if btn_calcular:
         st.session_state['resultados'] = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
         st.session_state['prazo_simulado'] = p_meses
@@ -84,6 +84,7 @@ with tab_analise:
         res = st.session_state['resultados']
         prazo = st.session_state['prazo_simulado']
         
+        # Resumo dos dados
         resumo = []
         for nome, df in res.items():
             resumo.append({
@@ -98,29 +99,28 @@ with tab_analise:
         maior_juros = df_res['Total Juros'].max()
         df_res['Economia'] = maior_juros - df_res['Total Juros']
 
-        col1, col2 = st.columns([1, 2])
+        # --- EXIBIÇÃO VERTICAL ---
+        st.subheader("🏆 Ranking de Economia")
+        st.table(df_res.style.format({
+            'Total Pago': 'R$ {:.2f}', 
+            'Total Juros': 'R$ {:.2f}', 
+            'Economia': 'R$ {:.2f}',
+            'Primeira Parcela': 'R$ {:.2f}',
+            'Última Parcela': 'R$ {:.2f}'
+        }))
         
-        with col1:
-            st.subheader("🏆 Ranking de Economia")
-            st.table(df_res.style.format({
-                'Total Pago': 'R$ {:.2f}', 
-                'Total Juros': 'R$ {:.2f}', 
-                'Economia': 'R$ {:.2f}',
-                'Primeira Parcela': 'R$ {:.2f}',
-                'Última Parcela': 'R$ {:.2f}'
-            }))
-            
-            melhor = df_res.iloc[0]
-            st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso, economizando **R$ {melhor['Economia']:.2f}** em juros!")
+        melhor = df_res.iloc[0]
+        st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso, economizando **R$ {melhor['Economia']:.2f}** em juros!")
 
-        with col2:
-            st.subheader("📉 Evolução do Saldo Devedor")
-            plot_data = pd.DataFrame({'Mês': range(1, prazo + 1)})
-            for nome, df in res.items():
-                plot_data[nome] = df['Saldo Devedor'].values
-            st.line_chart(plot_data.set_index('Mês'))
+        st.markdown("---") # Divisor visual
 
-        # Download do Excel
+        st.subheader("📉 Evolução do Saldo Devedor")
+        plot_data = pd.DataFrame({'Mês': range(1, prazo + 1)})
+        for nome, df in res.items():
+            plot_data[nome] = df['Saldo Devedor'].values
+        st.line_chart(plot_data.set_index('Mês'))
+
+        # Botão de Download
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_res.to_excel(writer, sheet_name='Resumo', index=False)
@@ -144,30 +144,28 @@ with tab_ajuda:
         st.subheader("📌 SAC")
         st.write("""
         **Amortização Constante**
-        - **Parcelas:** Decrescentes (começam altas e diminuem).
-        - **Dívida:** O valor principal é reduzido de forma igual todo mês.
-        - **Custo:** Geralmente mais barato que a Price em juros totais.
+        - **Parcelas:** Começam altas e diminuem ao longo do tempo.
+        - **Dívida:** O valor principal é reduzido de forma fixa mensalmente.
+        - **Custo:** Geralmente resulta em menos juros pagos que a Price.
         """)
         
     with col_b:
         st.subheader("📌 PRICE")
         st.write("""
         **Sistema Francês**
-        - **Parcelas:** Fixas do início ao fim do contrato.
-        - **Dívida:** Amortização lenta no início, rápida no final.
-        - **Custo:** Ideal para previsibilidade, mas paga-se mais juros no total.
+        - **Parcelas:** Valores fixos da primeira à última prestação.
+        - **Dívida:** Amortização lenta no início e acelerada no final.
+        - **Custo:** Oferece previsibilidade, mas custa mais juros no total.
         """)
 
     with col_c:
         st.subheader("📌 SACRE")
         st.write("""
-        **Mix de SAC e Price**
-        - **Parcelas:** Podem oscilar no início, mas caem rápido depois.
-        - **Dívida:** Foco em amortizar o saldo devedor agressivamente.
-        - **Custo:** Um dos sistemas mais eficientes para reduzir juros totais.
+        **Mix SAC e Price**
+        - **Parcelas:** Podem ter leve subida inicial, mas caem rapidamente.
+        - **Dívida:** Foco em reduzir o saldo devedor o mais rápido possível.
+        - **Custo:** Altamente eficiente para quem quer quitar rápido.
         """)
-    
-    st.info("💡 **Dica do Especialista:** Amortizar o saldo devedor diretamente reduz o tempo de contrato e economiza juros significativamente.")
 
 # --- 4. RODAPÉ ---
 st.markdown("---")
