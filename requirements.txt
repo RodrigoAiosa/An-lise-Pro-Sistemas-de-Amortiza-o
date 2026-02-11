@@ -1,4 +1,2 @@
-streamlit
-pandas
-xlsxwriter
-plotly
+webdriver-manager
+selenium>=4.20.0
