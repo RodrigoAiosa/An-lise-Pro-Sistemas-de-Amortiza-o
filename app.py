@@ -1,184 +1,214 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
+import time
+import glob
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select, WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO E ESTILOS ---
-st.set_page_config(page_title="Análise Pro: Amortização", layout="wide")
+# Configuração da página
+st.set_page_config(page_title="Calculadora de Viabilidade Leilão", layout="wide")
 
-# Definição do Rodapé (Posicionado no topo para evitar NameError)
-footer_html = """
-<div style='text-align: center; color: gray;'>
-    <p style='margin-bottom: 5px;'>Desenvolvido por <b>Rodrigo AIOSA</b></p>
-    <div style='display: flex; justify-content: center; gap: 20px; font-size: 24px;'>
-        <a href='https://wa.me/5511977019335' target='_blank' style='text-decoration: none;'>
-            <img src='https://cdn-icons-png.flaticon.com/512/733/733585.png' width='25' height='25' title='WhatsApp'>
-        </a>
-        <a href='https://www.linkedin.com/in/rodrigoaiosa/' target='_blank' style='text-decoration: none;'>
-            <img src='https://cdn-icons-png.flaticon.com/512/174/174857.png' width='25' height='25' title='LinkedIn'>
-        </a>
-    </div>
-</div>
-"""
+# --- FUNÇÕES DE AUXÍLIO ---
+def format_brl(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- 2. FUNÇÕES DE CÁLCULO ---
-def calcular_todos_sistemas(valor, taxa_anual, prazo, metodo_taxa):
-    if metodo_taxa == "Mensal (Nominal/12)":
-        taxa_mensal = (taxa_anual / 100) / 12
-    else:
-        taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
-        
-    sistemas = {}
+def tratar_texto_caixa(df):
+    """Limpa a sujeira de codificação das colunas da Caixa"""
+    # Mapa de tradução de lixo para texto humano
+    mapa_sujeira = {
+        'NÂ° do imÃ³vel': 'N° do Imóvel',
+        'NÂ° do imÃ³ve': 'N° do Imóvel',
+        'EndereÃ§o': 'Endereço',
+        'PreÃ§o': 'Preço',
+        'Valor de avaliaÃ§Ã£o': 'Valor de Avaliação',
+        'Desconto': 'Desconto',
+        'DescriÃ§Ã£o': 'Descrição',
+        'Modalidade de venda': 'Modalidade de Venda',
+        'avaliaÃ§Ã£o': 'Avaliação',
+        'Ã§Ã£o': 'ção',
+        'Ã³': 'ó'
+    }
     
-    def gerar_df(dados):
-        return pd.DataFrame(dados, columns=['Mês', 'Parcela', 'Juros', 'Amortização', 'Saldo Devedor'])
+    # Limpa nomes das colunas
+    df.columns = [c.strip() for c in df.columns]
+    for erro, correto in mapa_sujeira.items():
+        df.columns = [c.replace(erro, correto) if erro in c else c for c in df.columns]
+    
+    # Limpa o conteúdo das células (apenas colunas de texto)
+    cols_texto = df.select_dtypes(include=['object']).columns
+    for col in cols_texto:
+        for erro, correto in mapa_sujeira.items():
+            df[col] = df[col].astype(str).str.replace(erro, correto)
+            
+    return df
 
-    # --- SAC ---
-    sd, amort = valor, valor / prazo
-    sistemas['SAC'] = gerar_df([[i, amort + (sd - (i-1)*amort) * taxa_mensal, (sd - (i-1)*amort) * taxa_mensal, amort, max(sd - i*amort, 0)] for i in range(1, prazo + 1)])
+def aguardar_download_concluido(diretorio, timeout=150):
+    segundos = 0
+    while segundos < timeout:
+        arquivos = os.listdir(diretorio)
+        processando = any(f.endswith(".crdownload") or f.endswith(".tmp") for f in arquivos)
+        arquivos_csv = [f for f in arquivos if f.endswith(".csv") and "tratada" not in f]
+        if not processando and len(arquivos_csv) > 0:
+            return True
+        time.sleep(2)
+        segundos += 2
+    return False
 
-    # --- PRICE ---
-    sd = valor
-    p_fixa = valor * (taxa_mensal * (1 + taxa_mensal)**prazo) / ((1 + taxa_mensal)**prazo - 1)
-    dados_price = []
-    for i in range(1, prazo + 1):
-        j = sd * taxa_mensal
-        a = p_fixa - j
-        sd -= a
-        dados_price.append([i, p_fixa, j, a, max(sd, 0)])
-    sistemas['PRICE'] = gerar_df(dados_price)
-
-    # --- SACRE ---
-    sd = valor
-    dados_sacre = []
-    for i in range(1, prazo + 1):
-        a = sd / (prazo - i + 1)
-        j = sd * taxa_mensal
-        dados_sacre.append([i, a + j, j, a, max(sd - a, 0)])
-        sd -= a
-    sistemas['SACRE'] = gerar_df(dados_sacre)
-
-    return sistemas
-
-# --- 3. INTERFACE PRINCIPAL ---
-st.title("📊 Análise Pro: Sistemas de Amortização")
-st.markdown("Compare qual sistema protege melhor o seu património ao longo do tempo.")
-
-tab_analise, tab_ajuda = st.tabs(["🚀 Simulador e Análise", "📖 Entenda os Sistemas"])
-
-with tab_analise:
-    with st.sidebar:
-        st.header("⚙️ Configurações")
-        v_total = st.number_input("Valor Financiado (R$)", min_value=0.0, value=100000.0, step=1000.0)
-        t_anual = st.number_input("Taxa de Juros Anual (%)", min_value=0.0, value=12.0)
-        p_meses = st.number_input("Prazo (Meses)", min_value=1, value=60)
-        metodo_taxa = st.selectbox("Cálculo da Taxa", ["Mensal (Nominal/12)", "Equivalente (Exponencial)"])
+def robo_caixa():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    download_dir = os.path.join(base_dir, "temp_caixa")
+    if not os.path.exists(download_dir): os.makedirs(download_dir)
+    
+    # OPÇÕES PARA RODAR NO SERVIDOR (STREAMLIT CLOUD)
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless") # Roda sem janela
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    
+    prefs = {
+        "download.default_directory": download_dir,
+        "download.prompt_for_download": False,
+        "directory_upgrade": True,
+        "safebrowsing.enabled": True
+    }
+    options.add_experimental_option("prefs", prefs)
+    
+    # No Streamlit Cloud, o driver já está no PATH pelo packages.txt
+    try:
+        driver = webdriver.Chrome(options=options)
+        driver.get("https://venda-imoveis.caixa.gov.br/sistema/download-lista.asp")
+        wait = WebDriverWait(driver, 20)
         
-        btn_calcular = st.button("🚀 Calcular e Analisar Vantagens", use_container_width=True)
-
-    # Lógica de persistência com Session State
-    if btn_calcular:
-        st.session_state['resultados'] = calcular_todos_sistemas(v_total, t_anual, p_meses, metodo_taxa)
-        st.session_state['prazo_simulado'] = p_meses
-
-    if 'resultados' in st.session_state:
-        res = st.session_state['resultados']
-        prazo = st.session_state['prazo_simulado']
+        dropdown = wait.until(EC.presence_of_element_located((By.ID, "cmb_estado")))
+        Select(dropdown).select_by_value("geral")
         
-        # Processamento do Resumo
-        resumo = []
-        for nome, df in res.items():
-            resumo.append({
-                'Sistema': nome,
-                'Total Pago': df['Parcela'].sum(),
-                'Total Juros': df['Juros'].sum(),
-                'Primeira Parcela': df['Parcela'].iloc[0],
-                'Última Parcela': df['Parcela'].iloc[-1]
-            })
-        
-        df_res = pd.DataFrame(resumo).sort_values('Total Juros')
-        maior_juros = df_res['Total Juros'].max()
-        df_res['Economia'] = maior_juros - df_res['Total Juros']
+        btn = wait.until(EC.element_to_be_clickable((By.ID, "btn_next1")))
+        btn.click()
 
-        # --- EXIBIÇÃO: RANKING ---
-        st.subheader("🏆 Ranking de Economia")
-        st.table(df_res.style.format({
-            'Total Pago': 'R$ {:.2f}', 
-            'Total Juros': 'R$ {:.2f}', 
-            'Economia': 'R$ {:.2f}',
-            'Primeira Parcela': 'R$ {:.2f}',
-            'Última Parcela': 'R$ {:.2f}'
-        }))
-        
-        melhor = df_res.iloc[0]
-        st.success(f"O sistema **{melhor['Sistema']}** é o mais vantajoso, economizando **R$ {melhor['Economia']:.2f}** em juros!")
+        if aguardar_download_concluido(download_dir):
+            time.sleep(2)
+            lista_arquivos = glob.glob(os.path.join(download_dir, "*.csv"))
+            arquivo_recente = max(lista_arquivos, key=os.path.getctime)
+            
+            df = pd.read_csv(arquivo_recente, sep=';', encoding='ISO-8859-1', skiprows=2)
+            df = tratar_texto_caixa(df)
+            df.dropna(how='all', inplace=True)
+            df['data_hora_inf'] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            
+            csv_buffer = df.to_csv(index=False, sep=';', encoding='utf-8-sig')
+            driver.quit()
+            return csv_buffer, len(df)
+    except Exception as e:
+        if 'driver' in locals(): driver.quit()
+        return None, f"Erro no servidor: {str(e)}"
+    return None, "Falha desconhecida."
 
-        st.markdown("---") 
+def main():
+    st.title("⚖️ Calculadora de Viabilidade Leilão - Profissional")
 
-        # --- EXIBIÇÃO: GRÁFICO (ABAIXO DA TABELA) ---
-        st.subheader("📉 Evolução do Saldo Devedor")
-        plot_data = pd.DataFrame({'Mês': range(1, prazo + 1)})
-        for nome, df in res.items():
-            plot_data[nome] = df['Saldo Devedor'].values
-        st.line_chart(plot_data.set_index('Mês'))
+    # --- SIDEBAR ---
+    st.sidebar.header("🚀 Perfil de Investimento")
+    tipo_imovel = st.sidebar.selectbox("Selecione o tipo de imóvel:", ["Apartamento", "Casa", "Terreno", "Gleba"])
+    perfil = st.sidebar.selectbox("Escolha um perfil:", ["Manual", "Apartamento Popular", "Médio Padrão", "Alto Padrão"])
 
-        st.markdown("---")
+    defaults = {
+        "Manual": {"avaliacao": 0.0, "lance": 0.0, "cartorio": 0.0, "desocupa": 0.0, "reforma": 0.0, "condo": 0.0, "iptu": 0.0, "venda": 0.0, "agua": 0.0, "luz": 0.0, "gas": 0.0},
+        "Apartamento Popular": {"avaliacao": 250000.0, "lance": 160000.0, "cartorio": 1200.0, "desocupa": 8000.0, "reforma": 20000.0, "condo": 350.0, "iptu": 60.0, "venda": 245000.0, "agua": 60.0, "luz": 120.0, "gas": 45.0},
+        "Médio Padrão": {"avaliacao": 750000.0, "lance": 450000.0, "cartorio": 3000.0, "desocupa": 5000.0, "reforma": 35000.0, "condo": 800.0, "iptu": 200.0, "venda": 700000.0, "agua": 90.0, "luz": 250.0, "gas": 85.0},
+        "Alto Padrão": {"avaliacao": 2500000.0, "lance": 1300000.0, "cartorio": 9000.0, "desocupa": 0.0, "reforma": 120000.0, "condo": 2200.0, "iptu": 900.0, "venda": 2200000.0, "agua": 180.0, "luz": 650.0, "gas": 150.0}
+    }
+    d = defaults[perfil]
 
-        # --- EXIBIÇÃO: DETALHES POR SISTEMA ---
-        st.subheader("📋 Detalhes Mensais")
-        sistema_selecionado = st.selectbox("Selecione o sistema para ver a tabela completa:", list(res.keys()))
-        st.dataframe(res[sistema_selecionado].style.format({
-            'Parcela': '{:.2f}', 'Juros': '{:.2f}', 'Amortização': '{:.2f}', 'Saldo Devedor': '{:.2f}'
-        }), use_container_width=True)
+    # --- BLOCO 0: DADOS CAIXA ---
+    with st.expander("🏢 Extrair Lista da Caixa", expanded=False):
+        if st.button("🚀 Iniciar Coleta e Limpeza"):
+            with st.status("Tratando nomes de colunas e endereços...", expanded=True) as status:
+                csv_data, res = robo_caixa()
+                if csv_data:
+                    status.update(label="Lista Tratada com Sucesso!", state="complete")
+                    st.download_button("💾 Baixar Dados", csv_data, f"imovel_caixa_{datetime.now().strftime('%y%m%d_%H%M%S')}.csv", "text/csv")
+                else: st.error(res)
 
-        # Preparação do ficheiro Excel para download
+    # --- BLOCO 1: ARREMATAÇÃO ---
+    with st.expander("💵 Bloco 1: Arrematação", expanded=True):
+        col_inp, col_mem = st.columns([3, 2])
+        with col_inp:
+            v_avaliacao = st.number_input("Valor de Avaliação (R$)", value=float(d["avaliacao"]))
+            tipo_compra = st.radio("Pagamento:", ["À Vista", "Financiado"], horizontal=True)
+            v_lance = st.number_input("Valor do Lance (R$)", value=float(d["lance"]))
+            
+            v_entrada, v_financiado, juros_mensal, v_prestacao = 0.0, 0.0, 0.0, 0.0
+            if tipo_compra == "Financiado":
+                v_entrada = st.number_input("Entrada (R$)", value=float(v_lance * 0.20))
+                v_financiado = v_lance - v_entrada
+                j_anual = st.number_input("Taxa Juros (% a.a.)", value=9.5)
+                juros_mensal = (1 + j_anual/100)**(1/12) - 1
+                v_prestacao = st.number_input("Prestação Mensal (R$)", value=0.0)
+            else:
+                v_entrada = v_lance
+
+            taxas_docs = st.number_input("Leiloeiro/ITBI/Registro (R$)", value=float(v_lance * 0.08))
+            desocupa = st.number_input("Desocupação (R$)", value=float(d["desocupa"]))
+            total_b1 = v_entrada + taxas_docs + desocupa
+        with col_mem: st.metric("Total Arrematação", format_brl(total_b1))
+
+    # --- BLOCO 2: CUSTOS ---
+    with st.expander("🔗 Bloco 2: Custos Intermediários", expanded=True):
+        col_inp2, col_mem2 = st.columns([3, 2])
+        with col_inp2:
+            reforma = st.number_input("Reforma (R$)", value=float(d["reforma"]))
+            meses = st.number_input("Meses até a Venda", value=7)
+            contas_mes = st.number_input("Água+Luz+Condo+IPTU+Gás (R$/mês)", value=float(d["agua"]+d["luz"]+d["condo"]+d["iptu"]+d["gas"]))
+            total_contas = contas_mes * meses
+            juros_obra = (v_prestacao * meses) if v_prestacao > 0 else (v_financiado * juros_mensal * meses)
+            total_b2 = reforma + total_contas + juros_obra
+        with col_mem2: st.metric("Total Intermediários", format_brl(total_b2))
+
+    # --- BLOCO 3: VENDA ---
+    with st.expander("🏷️ Bloco 3: Venda e Lucro", expanded=True):
+        col_v1, col_v2 = st.columns([3, 2])
+        with col_v1:
+            v_venda = st.number_input("Preço de Venda (R$)", value=float(d["venda"]))
+            p_corretor = st.number_input("Comissão Corretor (%)", value=5.0)
+            v_comis = v_venda * (p_corretor / 100)
+            st.caption(f"Comissão Corretor: {format_brl(v_comis)}")
+            
+            p_imp = st.number_input("Imposto sobre Ganho (%)", value=15.0)
+            
+            invest_total = total_b1 + total_b2
+            lucro_bruto = (v_venda - v_comis) - v_financiado - invest_total
+            v_imp = max(0.0, lucro_bruto * (p_imp / 100))
+            lucro_liq = lucro_bruto - v_imp
+            roi = (lucro_liq / invest_total * 100) if invest_total > 0 else 0
+
+        with col_v2:
+            if lucro_liq >= 0:
+                st.success(f"### Lucro: {format_brl(lucro_liq)}\n### ROI: {roi:.2f}%")
+            else:
+                st.error(f"### Prejuízo: {format_brl(lucro_liq)}\n### ROI: {roi:.2f}%")
+
+    # --- RELATÓRIO EXCEL ---
+    def exportar():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_res.to_excel(writer, sheet_name='Resumo', index=False)
-            for nome, df in res.items():
-                df.to_excel(writer, sheet_name=nome, index=False)
-        
-        st.download_button(
-            label="📥 Baixar Relatório Completo (.xlsx)",
-            data=output.getvalue(),
-            file_name="analise_amortizacao_aiosa.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+            pd.DataFrame([{"Data": datetime.now(), "Tipo": tipo_imovel, "Lucro": lucro_liq, "ROI %": roi}]).to_excel(writer, index=False, sheet_name='Resumo')
+            pd.DataFrame([
+                {"Categoria": "Arrematação (Entrada + Docs)", "Valor": total_b1},
+                {"Categoria": "Custos (Reforma + Manutenção)", "Valor": total_b2},
+                {"Categoria": "Comissão Corretor", "Valor": v_comis},
+                {"Categoria": "Imposto", "Valor": v_imp}
+            ]).to_excel(writer, index=False, sheet_name='Detalhes')
+        return output.getvalue()
 
-with tab_ajuda:
-    st.header("Entenda a diferença entre os sistemas")
-    
-    col_a, col_b, col_c = st.columns(3)
-    
-    with col_a:
-        st.subheader("📌 SAC")
-        st.write("""
-        **Amortização Constante**
-        - **Parcelas:** Decrescentes (começam mais altas).
-        - **Dívida:** O valor principal cai de forma igual todos os meses.
-        - **Custo:** Pagas menos juros no total do que na Price.
-        """)
-        
-    with col_b:
-        st.subheader("📌 PRICE")
-        st.write("""
-        **Sistema Francês**
-        - **Parcelas:** Fixas do início ao fim.
-        - **Dívida:** Amortização lenta no início e rápida no final.
-        - **Custo:** Oferece previsibilidade, mas o custo total de juros é maior.
-        """)
+    st.sidebar.markdown("---")
+    st.sidebar.download_button("📥 BAIXAR RELATÓRIO COMPLETO", exportar(), f"simulacao_{tipo_imovel}.xlsx")
 
-    with col_c:
-        st.subheader("📌 SACRE")
-        st.write("""
-        **Mix SAC e Price**
-        - **Parcelas:** Podem subir no início, mas caem rapidamente depois.
-        - **Dívida:** Foco na amortização acelerada do saldo devedor.
-        - **Custo:** Sistema muito eficiente para reduzir o total pago.
-        """)
-    
-    st.info("💡 **Dica:** Se tiver disponibilidade financeira, faça amortizações extras no saldo devedor para reduzir o prazo e os juros drasticamente.")
-
-# --- 4. RODAPÉ ---
-st.markdown("---")
-st.markdown(footer_html, unsafe_allow_html=True)
+if __name__ == "__main__":
+    main()
